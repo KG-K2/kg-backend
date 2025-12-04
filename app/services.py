@@ -4,9 +4,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-uri = os.getenv("NEO4J_URI")
-username = os.getenv("NEO4J_USERNAME")
-password = os.getenv("NEO4J_PASSWORD")
+uri = os.getenv("NEO4J_URI", "bolt://localhost:7687")
+username = os.getenv("NEO4J_USERNAME", "neo4j")
+password = os.getenv("NEO4J_PASSWORD", "password")
 
 driver = GraphDatabase.driver(uri, auth=(username, password))
 
@@ -14,26 +14,25 @@ def run_custom_query(query: str):
     try:
         with driver.session() as session:
             result = session.run(query)
-            records = [record.data() for record in result]
-            return records
+            return [record.data() for record in result]
     except Exception as e:
         return {"error": str(e)}
-    
 
 def search_graph(search_term: str):
-    """
-    Melakukan pencarian fulltext fuzzy pada Artist dan Artwork.
-    """
-    # Menambahkan tilde (~) di akhir kata untuk fuzzy matching (toleransi typo)
-    # Contoh: "Monet" -> "Monet~"
     fuzzy_term = f"{search_term}~"
     
+    # PERBAIKAN: 
+    # Jika Node adalah Artist, kita return 'original_name' sebagai ID.
+    # Jika Node adalah Artwork, kita return 'id' (angka) sebagai ID.
     cypher_query = """
     CALL db.index.fulltext.queryNodes("search_art", $term) YIELD node, score
     RETURN 
-        id(node) as id,
+        CASE 
+            WHEN 'Artist' IN labels(node) THEN node.original_name 
+            ELSE node.id 
+        END as id,
         labels(node)[0] as type,
-        COALESCE(node.name, node.title) as label,
+        COALESCE(node.name, node.title, node.original_name) as label,
         properties(node) as details,
         score
     ORDER BY score DESC
@@ -43,7 +42,6 @@ def search_graph(search_term: str):
     try:
         with driver.session() as session:
             result = session.run(cypher_query, term=fuzzy_term)
-            # Format hasil agar sesuai dengan pydantic model
             records = [
                 {
                     "id": record["id"],
@@ -58,93 +56,73 @@ def search_graph(search_term: str):
     except Exception as e:
         print(f"Search Error: {e}")
         return []
+
+def get_artwork_by_id(tx, art_id):
+    query = """
+    MATCH (a:Artwork {id: $art_id})
+    OPTIONAL MATCH (a)-[:CREATED_BY]->(artist:Artist)
+    RETURN a.id AS id, 
+           a.title AS title, 
+           a.image_url AS image_url,
+           a.meta_data AS meta,
+           a.file_info AS form,
+           a.location AS location,
+           artist.original_name AS artist_name,
+           artist.nationality AS artist_nation,
+           artist.bio AS artist_bio
+    """
+    result = tx.run(query, art_id=int(art_id)).single()
     
-def get_artist_by_id(node_id: int):
-    """
-    Mengambil data Artist beserta semua Artwork buatannya.
-    """
-    # PERBAIKAN 1: Ganti 'WHERE id(a)' menjadi 'WHERE a.id'
-    query = """
-    MATCH (a:Artist) 
-    WHERE a.id = $id
-    OPTIONAL MATCH (a)-[:CREATED]->(w:Artwork)
-    RETURN a, collect(w) as artworks
-    """
-    try:
-        with driver.session() as session:
-            result = session.run(query, id=node_id).single()
-            if not result:
-                return None
-            
-            artist_node = result["a"]
-            artworks_nodes = result["artworks"]
-            
-            # PERBAIKAN 2: Ambil ID dari properti CSV (.get("id")), bukan internal ID
-            artist_data = {
-                "id": artist_node.get("id"), 
-                "name": artist_node.get("name"),
-                "bio": artist_node.get("bio"),
-                "nationality": artist_node.get("nationality"),
-                "type": "Artist",
-                "artworks": []
-            }
+    if not result:
+        return None
+        
+    return {
+        "artwork": {
+            "id": result["id"],
+            "title": result["title"],
+            "url": result["image_url"],
+            "form": result["form"] or result["meta"], # Fallback ke metadata
+            "location": result["location"] or "Unknown Location",
+            "type": "Artwork"
+        },
+        "artist": {
+            "id": result["artist_name"], # ID Artist = Nama
+            "name": result["artist_name"],
+            "nationality": result["artist_nation"],
+            "bio": result["artist_bio"],
+            "type": "Artist"
+        } if result["artist_name"] else None
+    }
 
-            for w in artworks_nodes:
-                artist_data["artworks"].append({
-                    "id": w.get("id"),  # <--- Pastikan ini juga ambil properti id
-                    "title": w.get("title"),
-                    "url": w.get("url"),
-                    "form": w.get("form", "Unknown"),
-                    "type": "Artwork"
-                })
-                
-            return artist_data
-    except Exception as e:
-        print(f"Error fetching artist: {e}")
+def get_artist_by_name(tx, artist_name):
+    # Query ini mengambil data Artist DAN semua Artwork buatannya
+    query = """
+    MATCH (a:Artist {original_name: $name})
+    OPTIONAL MATCH (w:Artwork)-[:CREATED_BY]->(a)
+    RETURN a.original_name AS name, 
+           a.bio AS bio, 
+           a.years AS years,
+           a.nationality AS nationality,
+           collect({
+               id: w.id,
+               title: w.title,
+               url: w.image_url,
+               form: w.meta_data
+           }) AS artworks
+    """
+    result = tx.run(query, name=artist_name.strip()).single()
+    
+    if not result:
         return None
 
-def get_artwork_by_id(node_id: int):
-    """
-    Mengambil data Artwork beserta Artist pembuatnya.
-    """
-    # PERBAIKAN 1: Ganti 'WHERE id(w)' menjadi 'WHERE w.id'
-    query = """
-    MATCH (w:Artwork) 
-    WHERE w.id = $id
-    OPTIONAL MATCH (a:Artist)-[:CREATED]->(w)
-    RETURN w, a
-    """
-    try:
-        with driver.session() as session:
-            result = session.run(query, id=node_id).single()
-            if not result:
-                return None
-            
-            w = result["w"]
-            a = result["a"]
-            
-            # PERBAIKAN 2: Ambil ID dari properti CSV
-            artwork_data = {
-                "id": w.get("id"), 
-                "title": w.get("title"),
-                "url": w.get("url"),
-                "location": w.get("location", "Unknown Location"),
-                "form": w.get("form", "Painting"), 
-                "type": "Artwork"
-            }
-            
-            artist_data = None
-            if a:
-                artist_data = {
-                    "id": a.get("id"), # <--- Ambil properti id
-                    "name": a.get("name"),
-                    "nationality": a.get("nationality"),
-                    "bio": a.get("bio"),
-                    "type": "Artist"
-                }
-                
-            return {"artwork": artwork_data, "artist": artist_data}
-            
-    except Exception as e:
-        print(f"Error fetching artwork: {e}")
-        return None
+    # Bersihkan artwork yang null (jika artist tidak punya karya)
+    valid_artworks = [art for art in result["artworks"] if art["id"] is not None]
+
+    return {
+        "id": result["name"], # ID = Nama
+        "name": result["name"],
+        "bio": result["bio"],
+        "nationality": result["nationality"],
+        "type": "Artist",
+        "artworks": valid_artworks
+    }
