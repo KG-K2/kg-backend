@@ -21,20 +21,48 @@ def run_custom_query(query: str):
 def search_graph(search_term: str):
     fuzzy_term = f"{search_term}~"
     
-    # PERBAIKAN: 
-    # Jika Node adalah Artist, kita return 'original_name' sebagai ID.
-    # Jika Node adalah Artwork, kita return 'id' (angka) sebagai ID.
+    # Query ini diperbaiki untuk:
+    # 1. Mengambil nama Artist jika hasil search adalah Artwork (OPTIONAL MATCH)
+    # 2. Mengubah 'image_url' menjadi 'url' agar Frontend bisa baca
+    # 3. Mengembalikan ID: Angka untuk Artwork, Nama untuk Artist
+    
     cypher_query = """
     CALL db.index.fulltext.queryNodes("search_art", $term) YIELD node, score
+    
+    // Cek tipe node
+    WITH node, score, labels(node)[0] as type
+    
+    // Jika Artwork, cari siapa Artist-nya
+    OPTIONAL MATCH (node)-[:CREATED_BY]->(a:Artist)
+    
     RETURN 
+        // ID Logic: Kalau Artist pakai nama, kalau Artwork pakai ID angka
         CASE 
             WHEN 'Artist' IN labels(node) THEN node.original_name 
             ELSE node.id 
         END as id,
-        labels(node)[0] as type,
+        
+        type,
+        
         COALESCE(node.name, node.title, node.original_name) as label,
-        properties(node) as details,
-        score
+        
+        score,
+        
+        // Detail Logic: Mapping field database ke kebutuhan Frontend
+        CASE 
+            WHEN 'Artwork' IN labels(node) THEN {
+                url: node.image_url,            // INI KUNCINYA: Frontend minta 'url'
+                title: node.title,
+                artist_name_raw: a.original_name, // Biar nama artist muncul di kartu artwork
+                form: node.meta_data,
+                location: node.location
+            }
+            ELSE {
+                bio: node.bio,
+                nationality: node.nationality,
+                years: node.years
+            }
+        END as details
     ORDER BY score DESC
     LIMIT 20
     """
