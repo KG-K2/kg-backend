@@ -214,15 +214,14 @@ def get_year_details(tx, year_value):
     
     // 1. Siapa yang LAHIR tahun ini?
     OPTIONAL MATCH (born:Artist)-[:BORN_IN]->(y)
-    WITH y, collect(DISTINCT {name: born.original_name}) as born_list
+    WITH y, collect(DISTINCT {name: born.original_name, role: 'Born'}) as born_list
     
     // 2. Siapa yang MENINGGAL tahun ini?
     OPTIONAL MATCH (died:Artist)-[:DIED_IN]->(y)
-    WITH y, born_list, collect(DISTINCT {name: died.original_name}) as died_list
+    WITH y, born_list, collect(DISTINCT {name: died.original_name, role: 'Died'}) as died_list
     
     // 3. Karya apa yang DIBUAT tahun ini?
     OPTIONAL MATCH (art:Artwork)-[:CREATED_IN]->(y)
-    // Kita ambil detail artwork sedikit biar bisa ditampilin gambarnya
     WITH y, born_list, died_list, collect(DISTINCT {id: art.id, title: art.title, url: art.image_url})[..12] as artworks
     
     RETURN y.value as year,
@@ -230,7 +229,11 @@ def get_year_details(tx, year_value):
            died_list,
            artworks
     """
-    result = tx.run(query, year=int(year_value)).single()
-    return result.data() if result else None
+    try:
+        # Pastikan year di-cast ke integer
+        result = tx.run(query, year=int(year_value)).single()
+        return result.data() if result else None
+    except ValueError:
+        return None
 
 
