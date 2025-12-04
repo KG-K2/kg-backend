@@ -5,7 +5,8 @@ from app.services import run_custom_query, search_graph, get_artwork_by_id, get_
 from fastapi.middleware.cors import CORSMiddleware
 from app.services import (
     run_custom_query, search_graph, get_artwork_by_id, get_artist_by_name, 
-    get_location_details, get_movement_details, driver 
+    get_location_details, get_movement_details, driver,
+    get_year_details, driver
 )
 
 app = FastAPI()
@@ -65,3 +66,13 @@ def read_movement(name: str):
         if not result:
             raise HTTPException(status_code=404, detail="Movement not found")
         return result
+    
+@app.get("/year/{year}")
+def read_year(year: int):
+    with driver.session() as session:
+        result = session.execute_read(get_year_details, year)
+        if not result:
+            # Tahun mungkin belum ada di DB, tapi gak error, return kosong aja
+            return {"year": year, "born_list": [], "died_list": [], "artworks": []}
+        return result
+    
