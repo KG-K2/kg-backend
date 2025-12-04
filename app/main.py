@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException
-from app.models import QueryRequest, SearchResponse
-from app.services import run_custom_query, search_graph
+from app.models import QueryRequest, SearchResponse, ArtistDetail, ArtworkPageResponse
+from app.services import run_custom_query, search_graph, get_artist_by_id, get_artwork_by_id 
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
@@ -33,3 +33,18 @@ async def search(q: str):
     
     results = search_graph(q)
     return {"results": results}
+
+
+@app.get("/artist/{id}", response_model=ArtistDetail)
+async def get_artist(id: int):
+    result = get_artist_by_id(id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Artist not found")
+    return result
+
+@app.get("/artwork/{id}", response_model=ArtworkPageResponse)
+async def get_artwork(id: int):
+    result = get_artwork_by_id(id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Artwork not found")
+    return result

@@ -13,3 +13,26 @@ class SearchResult(BaseModel):
 
 class SearchResponse(BaseModel):
     results: List[SearchResult]
+
+# ... (kode QueryRequest dan SearchResult yang lama biarkan saja)
+
+class ArtworkDetail(BaseModel):
+    id: int
+    title: str
+    url: Optional[str] = None
+    form: Optional[str] = None # misal: painting, sculpture
+    location: Optional[str] = None
+    type: str = "Artwork"
+
+class ArtistDetail(BaseModel):
+    id: int
+    name: str
+    bio: Optional[str] = None
+    nationality: Optional[str] = None
+    image: Optional[str] = None # Kalau nanti ada foto artis
+    type: str = "Artist"
+    artworks: List[ArtworkDetail] = [] # List karya dia
+
+class ArtworkPageResponse(BaseModel):
+    artwork: ArtworkDetail
+    artist: Optional[ArtistDetail] = None # Info pembuatnya
