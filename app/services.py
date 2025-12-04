@@ -21,46 +21,29 @@ def run_custom_query(query: str):
 def search_graph(search_term: str):
     fuzzy_term = f"{search_term}~"
     
-    # Query ini diperbaiki untuk:
-    # 1. Mengambil nama Artist jika hasil search adalah Artwork (OPTIONAL MATCH)
-    # 2. Mengubah 'image_url' menjadi 'url' agar Frontend bisa baca
-    # 3. Mengembalikan ID: Angka untuk Artwork, Nama untuk Artist
-    
+    # Update Query Search: Ambil detail lengkap untuk kartu hasil search
     cypher_query = """
     CALL db.index.fulltext.queryNodes("search_art", $term) YIELD node, score
-    
-    // Cek tipe node
     WITH node, score, labels(node)[0] as type
-    
-    // Jika Artwork, cari siapa Artist-nya
     OPTIONAL MATCH (node)-[:CREATED_BY]->(a:Artist)
     
     RETURN 
-        // ID Logic: Kalau Artist pakai nama, kalau Artwork pakai ID angka
-        CASE 
-            WHEN 'Artist' IN labels(node) THEN node.original_name 
-            ELSE node.id 
-        END as id,
-        
+        CASE WHEN 'Artist' IN labels(node) THEN node.original_name ELSE node.id END as id,
         type,
-        
         COALESCE(node.name, node.title, node.original_name) as label,
-        
         score,
-        
-        // Detail Logic: Mapping field database ke kebutuhan Frontend
         CASE 
             WHEN 'Artwork' IN labels(node) THEN {
-                url: node.image_url,            // INI KUNCINYA: Frontend minta 'url'
+                url: node.image_url,
                 title: node.title,
-                artist_name_raw: a.original_name, // Biar nama artist muncul di kartu artwork
-                form: node.meta_data,
-                location: node.location
+                artist_name_raw: a.original_name,
+                year: node.year_created,    
+                medium: node.medium
             }
             ELSE {
                 bio: node.bio,
                 nationality: node.nationality,
-                years: node.years
+                years: toString(node.birth_year) + ' - ' + toString(node.death_year)
             }
         END as details
     ORDER BY score DESC
@@ -86,18 +69,26 @@ def search_graph(search_term: str):
         return []
 
 def get_artwork_by_id(tx, art_id):
+    # UPDATE: Ambil field spesifikasi (medium, dimensions, year_created)
     query = """
     MATCH (a:Artwork {id: $art_id})
     OPTIONAL MATCH (a)-[:CREATED_BY]->(artist:Artist)
     RETURN a.id AS id, 
            a.title AS title, 
            a.image_url AS image_url,
-           a.meta_data AS meta,
-           a.file_info AS form,
+           a.medium AS medium,              
+           a.dimensions AS dimensions,      
+           a.year_created AS year,          
            a.location AS location,
+           a.raw_metadata AS raw_meta,      
+           
            artist.original_name AS artist_name,
            artist.nationality AS artist_nation,
-           artist.bio AS artist_bio
+           artist.bio AS artist_bio,
+           artist.birth_year AS b_year,
+           artist.death_year AS d_year,
+           artist.period AS period,
+           artist.school AS school
     """
     result = tx.run(query, art_id=int(art_id)).single()
     
@@ -109,33 +100,46 @@ def get_artwork_by_id(tx, art_id):
             "id": result["id"],
             "title": result["title"],
             "url": result["image_url"],
-            "form": result["form"] or result["meta"], # Fallback ke metadata
+            "year": result["year"] or "Unknown Year",
+            "medium": result["medium"] or "Unknown Medium",
+            "dimensions": result["dimensions"] or "Unknown Dimensions",
             "location": result["location"] or "Unknown Location",
+            "description": result["raw_meta"],
             "type": "Artwork"
         },
         "artist": {
-            "id": result["artist_name"], # ID Artist = Nama
+            "id": result["artist_name"],
             "name": result["artist_name"],
             "nationality": result["artist_nation"],
             "bio": result["artist_bio"],
+            "birth_year": result["b_year"],
+            "death_year": result["d_year"],
+            "period": result["period"],
+            "school": result["school"],
             "type": "Artist"
         } if result["artist_name"] else None
     }
 
 def get_artist_by_name(tx, artist_name):
-    # Query ini mengambil data Artist DAN semua Artwork buatannya
+    # UPDATE: Ambil base_location juga
     query = """
     MATCH (a:Artist {original_name: $name})
     OPTIONAL MATCH (w:Artwork)-[:CREATED_BY]->(a)
     RETURN a.original_name AS name, 
            a.bio AS bio, 
-           a.years AS years,
            a.nationality AS nationality,
+           a.base_location AS base,      // <--- Ambil ini
+           a.birth_year AS b_year,
+           a.death_year AS d_year,
+           a.period AS period,
+           a.school AS school,
+           
            collect({
                id: w.id,
                title: w.title,
                url: w.image_url,
-               form: w.meta_data
+               year: w.year_created,
+               medium: w.medium
            }) AS artworks
     """
     result = tx.run(query, name=artist_name.strip()).single()
@@ -143,14 +147,19 @@ def get_artist_by_name(tx, artist_name):
     if not result:
         return None
 
-    # Bersihkan artwork yang null (jika artist tidak punya karya)
     valid_artworks = [art for art in result["artworks"] if art["id"] is not None]
 
     return {
-        "id": result["name"], # ID = Nama
+        "id": result["name"],
         "name": result["name"],
         "bio": result["bio"],
         "nationality": result["nationality"],
+        "base": result["base"],         # <--- Masukkan ke return dict
+        "birth_year": result["b_year"],
+        "death_year": result["d_year"],
+        "period": result["period"],
+        "school": result["school"],
         "type": "Artist",
         "artworks": valid_artworks
     }
+
