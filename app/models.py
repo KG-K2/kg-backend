@@ -42,3 +42,4 @@ class ArtistDetail(BaseModel):
 class ArtworkPageResponse(BaseModel):
     artwork: ArtworkDetail
     artist: Optional[ArtistDetail] = None
+    similar: List[dict] = []

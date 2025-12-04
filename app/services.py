@@ -68,11 +68,30 @@ def search_graph(search_term: str):
         print(f"Search Error: {e}")
         return []
 
+
 def get_artwork_by_id(tx, art_id):
-    # UPDATE: Ambil field spesifikasi (medium, dimensions, year_created)
+    # UPDATE: Tambahkan bagian Vector Search untuk rekomendasi
     query = """
     MATCH (a:Artwork {id: $art_id})
+    
+    // 1. AMBIL DETAIL UTAMA (Sama kayak sebelumnya)
     OPTIONAL MATCH (a)-[:CREATED_BY]->(artist:Artist)
+    
+    // 2. FITUR AI: CARI YANG MIRIP (Nearest Neighbor)
+    // Menggunakan index 'art_embeddings_index' yang sudah kita buat
+    // Kita cari 6, nanti yang ke-1 pasti dirinya sendiri (skor 1.0), jadi kita skip
+    CALL db.index.vector.queryNodes('art_embeddings_index', 6, a.embedding)
+    YIELD node as similar, score
+    WHERE similar.id <> a.id  // Pastikan bukan lukisan itu sendiri
+    
+    // Kumpulkan 5 rekomendasi terbaik
+    WITH a, artist, collect({
+        id: similar.id,
+        title: similar.title,
+        url: similar.image_url,
+        score: score
+    })[..5] as similar_artworks
+    
     RETURN a.id AS id, 
            a.title AS title, 
            a.image_url AS image_url,
@@ -84,11 +103,14 @@ def get_artwork_by_id(tx, art_id):
            
            artist.original_name AS artist_name,
            artist.nationality AS artist_nation,
+           artist.base_location AS artist_base,
            artist.bio AS artist_bio,
            artist.birth_year AS b_year,
            artist.death_year AS d_year,
            artist.period AS period,
-           artist.school AS school
+           artist.school AS school,
+           
+           similar_artworks  // <--- RETURN BARU
     """
     result = tx.run(query, art_id=int(art_id)).single()
     
@@ -111,17 +133,18 @@ def get_artwork_by_id(tx, art_id):
             "id": result["artist_name"],
             "name": result["artist_name"],
             "nationality": result["artist_nation"],
+            "base": result["artist_base"],
             "bio": result["artist_bio"],
             "birth_year": result["b_year"],
             "death_year": result["d_year"],
             "period": result["period"],
             "school": result["school"],
             "type": "Artist"
-        } if result["artist_name"] else None
+        } if result["artist_name"] else None,
+        "similar": result["similar_artworks"] # Masukkan ke response JSON
     }
 
 def get_artist_by_name(tx, artist_name):
-    # UPDATE: Ambil base_location juga
     query = """
     MATCH (a:Artist {original_name: $name})
     OPTIONAL MATCH (w:Artwork)-[:CREATED_BY]->(a)
