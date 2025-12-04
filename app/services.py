@@ -24,14 +24,25 @@ def search_graph(search_term: str):
     # Update Query Search: Ambil detail lengkap untuk kartu hasil search
     cypher_query = """
     CALL db.index.fulltext.queryNodes("search_art", $term) YIELD node, score
-    WITH node, score, labels(node)[0] as type
+    WITH node, score, labels(node)[0] as type,
+        toLower(COALESCE(node.name, node.title, node.original_name)) AS label_lower
+
+    // --- Score Boost: If exact token match inside title/label, add +5 ---
+    WITH node, type, score,
+        (score +
+            CASE 
+                WHEN label_lower CONTAINS toLower($raw) THEN 5
+                ELSE 0
+            END
+        ) AS boosted_score
+
     OPTIONAL MATCH (node)-[:CREATED_BY]->(a:Artist)
-    
+
     RETURN 
         CASE WHEN 'Artist' IN labels(node) THEN node.original_name ELSE node.id END as id,
         type,
         COALESCE(node.name, node.title, node.original_name) as label,
-        score,
+        boosted_score AS score,
         CASE 
             WHEN 'Artwork' IN labels(node) THEN {
                 url: node.image_url,
@@ -47,12 +58,12 @@ def search_graph(search_term: str):
             }
         END as details
     ORDER BY score DESC
-    LIMIT 20
+    LIMIT 50
     """
     
     try:
         with driver.session() as session:
-            result = session.run(cypher_query, term=fuzzy_term)
+            result = session.run(cypher_query, term=fuzzy_term, raw=search_term.lower())
             records = [
                 {
                     "id": record["id"],
