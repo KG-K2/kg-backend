@@ -3,6 +3,10 @@ from app.models import QueryRequest, SearchResponse, ArtistDetail, ArtworkPageRe
 # Import driver juga dari services untuk dipakai session-nya
 from app.services import run_custom_query, search_graph, get_artwork_by_id, get_artist_by_name, driver 
 from fastapi.middleware.cors import CORSMiddleware
+from app.services import (
+    run_custom_query, search_graph, get_artwork_by_id, get_artist_by_name, 
+    get_location_details, get_movement_details, driver 
+)
 
 app = FastAPI()
 
@@ -44,4 +48,20 @@ def read_artist(artist_name: str):
         result = session.execute_read(get_artist_by_name, artist_name)
         if not result:
             raise HTTPException(status_code=404, detail="Artist not found")
+        return result
+    
+@app.get("/location/{name}")
+def read_location(name: str):
+    with driver.session() as session:
+        result = session.execute_read(get_location_details, name)
+        if not result:
+            raise HTTPException(status_code=404, detail="Location not found")
+        return result
+
+@app.get("/movement/{name}")
+def read_movement(name: str):
+    with driver.session() as session:
+        result = session.execute_read(get_movement_details, name)
+        if not result:
+            raise HTTPException(status_code=404, detail="Movement not found")
         return result

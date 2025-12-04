@@ -163,3 +163,49 @@ def get_artist_by_name(tx, artist_name):
         "artworks": valid_artworks
     }
 
+def get_location_details(tx, name):
+    # Ambil detail Location + Top Artists + Top Artworks
+    query = """
+    MATCH (l:Location {name: $name})
+    
+    // 1. Ambil Artists yang based di sini
+    OPTIONAL MATCH (a:Artist)-[:BASED_IN]->(l)
+    WITH l, collect(DISTINCT {name: a.original_name, role: 'Resident'})[..12] as artists
+    
+    // 2. Ambil Artworks yang terkait lokasi ini (via string match atau relasi kalau ada)
+    OPTIONAL MATCH (art:Artwork) WHERE art.location CONTAINS $name
+    WITH l, artists, collect(DISTINCT {id: art.id, title: art.title, url: art.image_url})[..8] as artworks
+    
+    RETURN l.name as name,
+           l.description as description,
+           l.image_url as image,
+           artists,
+           artworks
+    """
+    result = tx.run(query, name=name).single()
+    return result.data() if result else None
+
+def get_movement_details(tx, name):
+    # Ambil detail Period/Movement + Top Artists + Top Artworks
+    query = """
+    MATCH (p:Period {name: $name})
+    
+    // 1. Ambil Artists di movement ini
+    OPTIONAL MATCH (a:Artist)-[:PART_OF_MOVEMENT]->(p)
+    WITH p, collect(DISTINCT {name: a.original_name})[..12] as artists
+    
+    // 2. Ambil Artworks dari artist di movement ini
+    OPTIONAL MATCH (a)-[:PART_OF_MOVEMENT]->(p)
+    MATCH (art:Artwork)-[:CREATED_BY]->(a)
+    WITH p, artists, collect(DISTINCT {id: art.id, title: art.title, url: art.image_url})[..8] as artworks
+    
+    RETURN p.name as name,
+           p.description as description,
+           p.image_url as image,
+           artists,
+           artworks
+    """
+    result = tx.run(query, name=name).single()
+    return result.data() if result else None
+
+

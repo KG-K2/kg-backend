@@ -5,3 +5,4 @@ python-dotenv
 pandas
 sentence-transformers
 requests
+SPARQLWrapper
