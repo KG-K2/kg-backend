@@ -10,7 +10,18 @@ password = os.getenv("NEO4J_PASSWORD", "password")
 
 driver = GraphDatabase.driver(uri, auth=(username, password))
 
+def is_read_only(query: str):
+    write_keywords = ["CREATE", "MERGE", "SET", "DELETE", "INSERT", "CALL"]
+
+    if any(keyword in query.upper() for keyword in write_keywords):
+        return False
+    return True
+
+
 def run_custom_query(query: str):
+    if not(is_read_only(query)):
+        return {"error": "query should be read-only."}
+    
     try:
         with driver.session() as session:
             result = session.run(query)
